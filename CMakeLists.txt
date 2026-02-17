@@ -58,8 +58,7 @@ add_executable(${PROJECT_NAME}_node
   ${LDLIDAR_DRI_NETWORK} 
   ${LDLIDAR_DRI_SERIAL}
 )
-ament_target_dependencies(${PROJECT_NAME}_node rclcpp sensor_msgs)
-target_link_libraries(${PROJECT_NAME}_node pthread)
+target_link_libraries(${PROJECT_NAME}_node rclcpp sensor_msgs pthread)
 
 # Install
 install(TARGETS ${PROJECT_NAME}_node
