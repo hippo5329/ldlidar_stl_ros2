@@ -37,7 +37,8 @@ typedef enum CommunicationMode {
   COMM_UDP_CLIENT_MODE, /* network communication for UDP client */
   COMM_UDP_SERVER_MODE, /* network communication for UDP server */
   COMM_TCP_CLIENT_MODE, /* network communication for TCP client */
-  COMM_TCP_SERVER_MODE  /* network communication for TCP server */
+  COMM_TCP_SERVER_MODE, /* network communication for TCP server */
+  COMM_TOPIC_MODE       /* ROS 2 topic ingestion mode */
 }CommunicationModeTypeDef;
 
 class LDLidarDriver {
@@ -76,6 +77,11 @@ class LDLidarDriver {
             const char* server_ip, 
             const char* server_port,
             CommunicationModeTypeDef comm_mode = COMM_TCP_CLIENT_MODE);
+
+  bool Start(LDType product_name,
+            CommunicationModeTypeDef comm_mode = COMM_TOPIC_MODE);
+
+  void FeedRawData(const uint8_t *data, size_t len);
 
   /**
    * @brief stop lidar device handle node

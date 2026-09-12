@@ -194,11 +194,43 @@ bool LDLidarDriver::Start(LDType product_name,
       break;
   }
   
-  is_start_flag_ = true;
-
-  SetIsOkStatus(true);
-  
   return true;
+}
+
+bool LDLidarDriver::Start(LDType product_name, CommunicationModeTypeDef comm_mode) {
+  if (is_start_flag_) {
+    return true;
+  }
+
+  if (LDType::NO_VERSION == product_name) {
+    LD_LOG_ERROR("input <product_name> is abnormal.", "");
+    return false;
+  }
+
+  if (COMM_TOPIC_MODE != comm_mode) {
+    LD_LOG_ERROR("input comm_mode is not COMM_TOPIC_MODE", "");
+    return false;
+  }
+
+  if (register_get_timestamp_handle_ == nullptr) {
+    LD_LOG_ERROR("get timestamp functional is not registered.", "");
+    return false;
+  }
+
+  comm_pkg_->ClearDataProcessStatus();
+  comm_pkg_->RegisterTimestampGetFunctional(register_get_timestamp_handle_);
+  comm_pkg_->SetProductType(product_name);
+
+  is_start_flag_ = true;
+  SetIsOkStatus(true);
+
+  return true;
+}
+
+void LDLidarDriver::FeedRawData(const uint8_t *data, size_t len) {
+  if (comm_pkg_ != nullptr && data != nullptr && len > 0) {
+    comm_pkg_->CommReadCallback(reinterpret_cast<const char*>(data), len);
+  }
 }
 
 bool LDLidarDriver::Stop(void) {

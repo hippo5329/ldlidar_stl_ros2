@@ -19,6 +19,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -62,6 +63,7 @@ target_link_libraries(${PROJECT_NAME}_node
   PUBLIC
     rclcpp::rclcpp
     ${sensor_msgs_TARGETS}
+    ${std_msgs_TARGETS}
     pthread
 )
 

@@ -23,6 +23,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
+#include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <string>
 
 struct LaserScanSetting

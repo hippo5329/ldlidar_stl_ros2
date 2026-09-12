@@ -32,7 +32,8 @@ int main(int argc, char **argv) {
   auto node = std::make_shared<rclcpp::Node>("ldlidar_published"); // create a ROS2 Node
   std::string product_name;
   std::string topic_name;
-std::string comm_mode = "serial";
+  std::string raw_scan_topic = "raw_scan";
+  std::string comm_mode = "serial";
   std::string port_name;
   int serial_port_baudrate;
   std::string server_ip;
@@ -57,6 +58,7 @@ std::string comm_mode = "serial";
   // declare ros2 param
   node->declare_parameter<std::string>("product_name", product_name);
   node->declare_parameter<std::string>("topic_name", topic_name);
+  node->declare_parameter<std::string>("raw_scan_topic", raw_scan_topic);
   node->declare_parameter<std::string>("frame_id", setting.frame_id);
 node->declare_parameter<std::string>("comm_mode", comm_mode);
   node->declare_parameter<std::string>("port_name", port_name);
@@ -80,6 +82,7 @@ node->declare_parameter<std::string>("server_ip", server_ip);
   // get ros2 param
   node->get_parameter("product_name", product_name);
   node->get_parameter("topic_name", topic_name);
+  node->get_parameter("raw_scan_topic", raw_scan_topic);
   node->get_parameter("frame_id", setting.frame_id);
 node->get_parameter("comm_mode", comm_mode);
   node->get_parameter("port_name", port_name);
@@ -144,6 +147,8 @@ RCLCPP_INFO(node->get_logger(), "<server_ip>: %s", net_ip);
   ldlidar::CommunicationModeTypeDef comm_mode_d;
   if (comm_mode == "serial") {
     comm_mode_d = ldlidar::COMM_SERIAL_MODE;
+  } else if (comm_mode == "topic") {
+    comm_mode_d = ldlidar::COMM_TOPIC_MODE;
   } else if (comm_mode == "udp_server") {
     comm_mode_d = ldlidar::COMM_UDP_SERVER_MODE;
   } else if (comm_mode == "udp_client") {
@@ -161,39 +166,74 @@ RCLCPP_INFO(node->get_logger(), "<server_ip>: %s", net_ip);
 
   ldlidarnode->EnableFilterAlgorithnmProcess(true);
 
-  if (comm_mode_d == ldlidar::COMM_SERIAL_MODE ?
-      ldlidarnode->Start(type_name, port_name, serial_port_baudrate, comm_mode_d) :
-      ldlidarnode->Start(type_name, net_ip, net_port, comm_mode_d)) {
+  rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr raw_sub;
+  if (comm_mode_d == ldlidar::COMM_TOPIC_MODE) {
+    raw_sub = node->create_subscription<std_msgs::msg::UInt8MultiArray>(
+      raw_scan_topic, 20,
+      [ldlidarnode](const std_msgs::msg::UInt8MultiArray::SharedPtr msg) {
+        if (!msg->data.empty()) {
+          ldlidarnode->FeedRawData(msg->data.data(), msg->data.size());
+        }
+      }
+    );
+  }
+
+  bool start_status = false;
+  if (comm_mode_d == ldlidar::COMM_TOPIC_MODE) {
+    start_status = ldlidarnode->Start(type_name, comm_mode_d);
+  } else if (comm_mode_d == ldlidar::COMM_SERIAL_MODE) {
+    start_status = ldlidarnode->Start(type_name, port_name, serial_port_baudrate, comm_mode_d);
+  } else {
+    start_status = ldlidarnode->Start(type_name, net_ip, net_port, comm_mode_d);
+  }
+
+  if (start_status) {
     RCLCPP_INFO(node->get_logger(), "ldlidar node start is success");
   } else {
     RCLCPP_ERROR(node->get_logger(), "ldlidar node start is fail");
     exit(EXIT_FAILURE);
   }
 
-  if (ldlidarnode->WaitLidarCommConnect(3000)) {
-    RCLCPP_INFO(node->get_logger(), "ldlidar communication is normal.");
+  if (comm_mode_d == ldlidar::COMM_TOPIC_MODE) {
+    RCLCPP_INFO(node->get_logger(), "Waiting for lidar raw_scan messages on topic: %s", raw_scan_topic.c_str());
+    auto wait_start = std::chrono::steady_clock::now();
+    while (rclcpp::ok() && !ldlidarnode->WaitLidarCommConnect(50)) {
+      rclcpp::spin_some(node);
+      if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - wait_start).count() >= 5) {
+        RCLCPP_INFO(node->get_logger(), "Still waiting for %s topic packets...", raw_scan_topic.c_str());
+        wait_start = std::chrono::steady_clock::now();
+      }
+    }
+    RCLCPP_INFO(node->get_logger(), "ldlidar raw topic communication connected.");
   } else {
-    RCLCPP_ERROR(node->get_logger(), "ldlidar communication is abnormal.");
-    exit(EXIT_FAILURE);
+    if (ldlidarnode->WaitLidarCommConnect(3000)) {
+      RCLCPP_INFO(node->get_logger(), "ldlidar communication is normal.");
+    } else {
+      RCLCPP_ERROR(node->get_logger(), "ldlidar communication is abnormal.");
+      exit(EXIT_FAILURE);
+    }
   }
 
   // create ldlidar data topic and publisher
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr publisher = 
       node->create_publisher<sensor_msgs::msg::LaserScan>(topic_name, 10);
   
-  rclcpp::WallRate r(setting.pub_rate);
+  rclcpp::WallRate r(comm_mode_d == ldlidar::COMM_TOPIC_MODE ? 50.0 : setting.pub_rate);
 
   ldlidar::Points2D laser_scan_points;
   double lidar_scan_freq;
   RCLCPP_INFO(node->get_logger(), "Publish topic message:ldlidar scan data.");
   while (rclcpp::ok()) {
+    rclcpp::spin_some(node);
     switch (ldlidarnode->GetLaserScanData(laser_scan_points, 1500)){
       case ldlidar::LidarStatus::NORMAL: 
         ldlidarnode->GetLidarScanFreq(lidar_scan_freq);
         ToLaserscanMessagePublish(laser_scan_points, lidar_scan_freq, setting, node, publisher);
         break;
       case ldlidar::LidarStatus::DATA_TIME_OUT:
-        RCLCPP_ERROR(node->get_logger(), "get ldlidar data is time out, please check your lidar device.");
+        if (comm_mode_d != ldlidar::COMM_TOPIC_MODE) {
+          RCLCPP_ERROR(node->get_logger(), "get ldlidar data is time out, please check your lidar device.");
+        }
         break;
       case ldlidar::LidarStatus::DATA_WAIT:
         break;
