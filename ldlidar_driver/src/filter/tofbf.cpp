@@ -123,7 +123,10 @@ std::vector<PointData> Tofbf::NearFilter(
   // Connection 0 degree and 359 degree
   auto first_item = group.front().front();
   auto last_item = group.back().back();
-  if (fabs(first_item.angle + 360.f - last_item.angle) < angle_delta_up_limit &&
+  // One group means front() and back() are the same vector: merging it into
+  // itself is undefined behaviour, and erasing it loses the whole scan.
+  if (group.size() > 1 &&
+      fabs(first_item.angle + 360.f - last_item.angle) < angle_delta_up_limit &&
       fabs(first_item.distance - last_item.distance) < last.distance * 0.03) {
     group.front().insert(group.front().begin(), group.back().begin(), group.back().end());
     group.erase(group.end() - 1);
