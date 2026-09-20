@@ -193,7 +193,14 @@ bool LDLidarDriver::Start(LDType product_name,
     }
       break;
   }
-  
+
+  // The serial overload sets both of these; this one used to set neither, so
+  // every network mode reported LidarStatus::STOP for ever after starting
+  // "successfully".
+  is_start_flag_ = true;
+
+  SetIsOkStatus(true);
+
   return true;
 }
 
