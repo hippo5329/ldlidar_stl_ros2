@@ -260,7 +260,9 @@ RCLCPP_INFO(node->get_logger(), "<server_ip>: %s", net_ip);
       else
         raw_exec.spin_some(std::chrono::milliseconds(raw_spin_ms));
     } else {
-      rclcpp::spin_some(node);
+      // Not rclcpp::spin_some(node): that adds the node to a second executor and
+      // throws "Node '/ld19' has already been added to an executor" (it is in raw_exec).
+      raw_exec.spin_some();
     }
     switch (ldlidarnode->GetLaserScanData(laser_scan_points, 1500)){
       case ldlidar::LidarStatus::NORMAL: 
