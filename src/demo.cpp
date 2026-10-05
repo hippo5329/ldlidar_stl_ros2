@@ -168,8 +168,12 @@ RCLCPP_INFO(node->get_logger(), "<server_ip>: %s", net_ip);
 
   rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr raw_sub;
   if (comm_mode_d == ldlidar::COMM_TOPIC_MODE) {
+    // Best effort: a scan is a stream, where the next packet is worth more than a
+    // retransmitted old one, and over micro-ROS a reliable topic costs the board
+    // acknowledgements and its reliable stream's history slots. A best-effort reader
+    // also matches a board still publishing reliable, so the two can be mixed.
     raw_sub = node->create_subscription<std_msgs::msg::UInt8MultiArray>(
-      raw_scan_topic, 20,
+      raw_scan_topic, rclcpp::QoS(rclcpp::KeepLast(20)).best_effort(),
       [ldlidarnode](const std_msgs::msg::UInt8MultiArray::SharedPtr msg) {
         if (!msg->data.empty()) {
           ldlidarnode->FeedRawData(msg->data.data(), msg->data.size());
