@@ -19,6 +19,8 @@
  * limitations under the License.
  */
 
+#include <cstdlib>
+#include <string>
 #include "ros2_api.h"
 #include "ldlidar_driver.h"
 
@@ -59,6 +61,20 @@ int main(int argc, char **argv) {
   node->declare_parameter<std::string>("product_name", product_name);
   node->declare_parameter<std::string>("topic_name", topic_name);
   node->declare_parameter<std::string>("raw_scan_topic", raw_scan_topic);
+  // Topic mode drains raw_scan with an executor each loop pass. A plain spin_some(node)
+  // takes each ready subscription once per call -- one message -- so at the 50 Hz loop a
+  // board publishing more than 50 raw_scan messages a second overflowed the queue and lost
+  // packets and whole revolutions. Measured on the Arduino UNO Q (~64 raw_scan msgs/s):
+  //   spin_some 10 ms  /scan 6.4 Hz      spin_some 20 ms  /scan 6.2 Hz
+  //   spin_all  10 ms  /scan 10.0 Hz (every message taken, worst gap 122 ms)
+  // so spin_all, which re-collects until nothing is left, is the default. raw_spin_ms
+  // bounds the drain per pass. Defaults from the environment, so a compose file can tune
+  // them without a rebuild: LDLIDAR_RAW_SPIN_MS, LDLIDAR_RAW_SPIN_ALL (1/true, 0/false).
+  const char *env_ms = std::getenv("LDLIDAR_RAW_SPIN_MS");
+  const char *env_all = std::getenv("LDLIDAR_RAW_SPIN_ALL");
+  node->declare_parameter<int>("raw_spin_ms", env_ms ? std::atoi(env_ms) : 10);
+  node->declare_parameter<bool>("raw_spin_all",
+      env_all ? !(std::string(env_all) == "0" || std::string(env_all) == "false") : true);
   node->declare_parameter<std::string>("frame_id", setting.frame_id);
 node->declare_parameter<std::string>("comm_mode", comm_mode);
   node->declare_parameter<std::string>("port_name", port_name);
@@ -83,6 +99,11 @@ node->declare_parameter<std::string>("server_ip", server_ip);
   node->get_parameter("product_name", product_name);
   node->get_parameter("topic_name", topic_name);
   node->get_parameter("raw_scan_topic", raw_scan_topic);
+  int raw_spin_ms = 10;
+  bool raw_spin_all = true;
+  node->get_parameter("raw_spin_ms", raw_spin_ms);
+  node->get_parameter("raw_spin_all", raw_spin_all);
+  if (raw_spin_ms < 1) raw_spin_ms = 1;
   node->get_parameter("frame_id", setting.frame_id);
 node->get_parameter("comm_mode", comm_mode);
   node->get_parameter("port_name", port_name);
@@ -222,13 +243,25 @@ RCLCPP_INFO(node->get_logger(), "<server_ip>: %s", net_ip);
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr publisher = 
       node->create_publisher<sensor_msgs::msg::LaserScan>(topic_name, 10);
   
+  rclcpp::executors::SingleThreadedExecutor raw_exec;
+  raw_exec.add_node(node);
+  if (comm_mode_d == ldlidar::COMM_TOPIC_MODE)
+    RCLCPP_INFO(node->get_logger(), "<raw_spin>: %s %d ms per loop pass",
+                raw_spin_all ? "spin_all" : "spin_some", raw_spin_ms);
   rclcpp::WallRate r(comm_mode_d == ldlidar::COMM_TOPIC_MODE ? 50.0 : setting.pub_rate);
 
   ldlidar::Points2D laser_scan_points;
   double lidar_scan_freq;
   RCLCPP_INFO(node->get_logger(), "Publish topic message:ldlidar scan data.");
   while (rclcpp::ok()) {
-    rclcpp::spin_some(node);
+    if (comm_mode_d == ldlidar::COMM_TOPIC_MODE) {
+      if (raw_spin_all)
+        raw_exec.spin_all(std::chrono::milliseconds(raw_spin_ms));
+      else
+        raw_exec.spin_some(std::chrono::milliseconds(raw_spin_ms));
+    } else {
+      rclcpp::spin_some(node);
+    }
     switch (ldlidarnode->GetLaserScanData(laser_scan_points, 1500)){
       case ldlidar::LidarStatus::NORMAL: 
         ldlidarnode->GetLidarScanFreq(lidar_scan_freq);
